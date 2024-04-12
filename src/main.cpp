@@ -31,15 +31,14 @@ int main(int argc, char* argv[]) {
     logMessage("MPI Initialized.", rank);
 
     std::vector<std::string> records;
-    std::string data_directory = "/Users/charan/Desktop/SJSU/275/CMPE-275-HPC-All_working/data_airflow"; 
+    std::string data_directory = "/Users/charan/Desktop/SJSU/275/CMPE-275-HPC-All_working/data_airflow_copy"; 
     std::vector<std::string> csv_files = get_csv_files(data_directory);
 
     for (const std::string& file_path : csv_files) {
        cout<<"Filepath getting distributed "<<file_path<<endl;
        distributeRecords(file_path, rank, size, records);
     }
-    cout<<"*************  Records length is "<<records.size()<<endl;
-    cout<<" ** single record looks like ***"<<records[0]<<endl;
+    cout<<"*************  Records length for rank "<<rank<<"  is  "<<records.size()<<endl;
     processRecords(records, rank);
 
     // Ensures all processes have finished processing

@@ -7,6 +7,8 @@ from flask import Flask, send_file, render_template_string, render_template
 import matplotlib
 from flask import url_for
 import seaborn as sns
+from mpl_toolkits.basemap import Basemap
+import numpy as np
 
 matplotlib.use('Agg')  # This line is crucial for non-GUI backend
 app = Flask(__name__)
@@ -32,6 +34,9 @@ headers = [
     "SiteAgency", "AQSID"]
 
 df = pd.read_csv('../../final_data/cleaned_file.csv', low_memory=False, on_bad_lines='skip')
+
+df_merged = pd.read_csv('../../final_data/merged_file.csv')
+
 if len(df.columns) == len(headers):
     # Assign headers to the DataFrame
     df.columns = headers
@@ -50,7 +55,8 @@ def index():
         <body>
             <h1>Welcome to the Air Quality Plot Server!</h1>
             <p>Select a category to view related plots:</p>
-            <ul>
+            <ul> 
+                <li><a href="/processing_efficiency">Records Processing Efficiency</a></li>
                 <li><a href="/air_quality">Air Quality by Location</a></li>
                 <li><a href="/time_series">Time Series of Air Quality</a></li>
                 <li><a href="/pollutant_distribution">Pollutant Distribution</a></li>
@@ -60,22 +66,19 @@ def index():
     </html>
     '''
 
-# The existing /air_quality route can stay as it is.
-
-# Route for a time series plot of AQI
-@app.route('/time_series')
-def time_series_plot():
+@app.route('/processing_efficiency')
+def processing_efficiency_plot():
     try:
-        local_df = df.copy()
-        local_df['UTC'] = pd.to_datetime(local_df['UTC'], errors='coerce')
-        local_df = local_df.dropna(subset=['UTC', 'AQI'])
-        local_df = local_df.sort_values(by='UTC')
         fig, ax = plt.subplots()
-        sns.lineplot(x='UTC', y='AQI', data=local_df, ax=ax)
-        ax.set_title('Time Series of AQI')
-        ax.set_xlabel('Time')
-        ax.set_ylabel('AQI')
-        plt.xticks(rotation=45)
+        
+        # Dynamically plotting each "RecordsProcessed-Px" column
+        for column in df_merged.columns:
+            sns.lineplot(data=df_merged, x=df_merged.index, y=column, ax=ax, label=column)
+        
+        ax.set_title('Records Processing Efficiency Over Time')
+        ax.set_xlabel('Time (Index)')
+        ax.set_ylabel('Records Processed')
+        plt.legend()
         plt.tight_layout()
         buf = io.BytesIO()
         plt.savefig(buf, format='png')
@@ -83,9 +86,61 @@ def time_series_plot():
         plt.close(fig)
         return send_file(buf, mimetype='image/png')
     except Exception as e:
+        print(e)
+        return str(e), 500
+
+@app.route('/time_series')
+def time_series_plot():
+    try:
+        # Create a copy of the dataframe to avoid modifying the original data
+        local_df = df.copy()
+        
+        # Convert 'UTC' column to datetime format, coerce errors to NaT (Not a Time)
+        local_df['UTC'] = pd.to_datetime(local_df['UTC'], errors='coerce')
+
+        local_df = local_df.dropna(subset=['UTC', 'AQI'])
+
+        local_df['AQI'] = pd.to_numeric(local_df['AQI'], errors='coerce')
+        print(local_df['AQI'].dtype)
+
+        local_df['AQI'] = local_df['AQI'].abs()
+        # Sort by 'UTC' to make sure the data is in chronological order
+        local_df = local_df.sort_values(by='UTC')
+
+        # Create the plot
+        fig, ax = plt.subplots()
+        
+        # Plot the data, ensure that 'UTC' is used as the x-axis and 'AQI' as the y-axis
+        sns.lineplot(x='UTC', y='AQI', data=local_df, ax=ax, ci=None)
+        
+        # Set the title and labels of the plot
+        ax.set_title('Time Series of AQI')
+        ax.set_xlabel('Time')
+        ax.set_ylabel('AQI')
+        
+        # Rotate x-axis labels to make them readable
+        plt.xticks(rotation=45)
+        
+        # Use tight_layout to adjust the plot dimensions and layout
+        plt.tight_layout()
+
+        # Save the plot to a BytesIO buffer to send via Flask
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        
+        # Go to the beginning of the buffer so it can be read
+        buf.seek(0)
+        
+        # Close the plot figure to free up memory
+        plt.close(fig)
+        
+        # Send the buffer as a response
+        return send_file(buf, mimetype='image/png')
+    except Exception as e:
         # In production, you would log the exception to your system's log
         print(e)
         return str(e), 500  # Return the error message and a 500 Internal Server Error status code
+
 # Route for pollutant distribution
 @app.route('/pollutant_distribution')
 def pollutant_distribution_plot():
@@ -104,35 +159,64 @@ def pollutant_distribution_plot():
     plt.close(fig)
     return send_file(buf, mimetype='image/png')
 
-
 @app.route('/air_quality')
 def plot_air_quality():
     local_df = df.copy()
-    
-    # Convert 'Latitude' and 'Longitude' to numeric values, coerce errors to NaN
     local_df['Latitude'] = pd.to_numeric(local_df['Latitude'], errors='coerce')
     local_df['Longitude'] = pd.to_numeric(local_df['Longitude'], errors='coerce')
     local_df['AQI'] = pd.to_numeric(local_df['AQI'], errors='coerce')
+    local_df = local_df.dropna(subset=['Latitude', 'Longitude', 'AQI'])
+    
+    fig, ax = plt.subplots(figsize=(15, 10))
+    
+    # Create a basic map projection
+    m = Basemap(projection='merc', llcrnrlat=min(local_df['Latitude']), urcrnrlat=max(local_df['Latitude']), 
+                llcrnrlon=min(local_df['Longitude']), urcrnrlon=max(local_df['Longitude']), lat_ts=20, resolution='c')
+    
+    m.drawcoastlines()
+    m.drawcountries()
+    m.drawstates()
+    
+    x, y = m(local_df['Longitude'].values, local_df['Latitude'].values)
+    sc = m.scatter(x, y, c=local_df['AQI'], cmap='viridis', vmin=0, vmax=90, s=10, edgecolor='none', alpha=0.75)
+    
+    plt.colorbar(sc, label='AQI', fraction=0.02, pad=0.04)  # Adjust the colorbar width here
+    plt.title('Air Quality Index (AQI) by Location')
+    
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=300)
+    buf.seek(0)
+    plt.close(fig)
+    
+    return send_file(buf, mimetype='image/png')
 
-    # Drop rows with NaN values in 'Latitude', 'Longitude', or 'AQI'
+@app.route('/heatmap_aqi')
+def heatmap_aqi():
+    local_df = df.copy()
+    local_df['Latitude'] = pd.to_numeric(local_df['Latitude'], errors='coerce')
+    local_df['Latitude'] = local_df['Latitude'].abs()
+    local_df['Longitude'] = pd.to_numeric(local_df['Longitude'], errors='coerce')
+    local_df['Longitude'] = local_df['Longitude'].abs()
+    local_df['AQI'] = pd.to_numeric(local_df['AQI'], errors='coerce')
+    local_df['AQI'] = local_df['AQI'].abs()
     local_df = local_df.dropna(subset=['Latitude', 'Longitude', 'AQI'])
     
     fig, ax = plt.subplots()
     
-    # Create a scatter plot with AQI values, limiting the AQI range to 0-200
-    sc = ax.scatter(local_df['Longitude'], local_df['Latitude'], c=local_df['AQI'], cmap='viridis', vmin=0, vmax=200)
-    ax.set_title('Air Quality Index (AQI) by Location')
+    # Create a hexbin map of AQI values
+    hb = ax.hexbin(local_df['Longitude'], local_df['Latitude'], C=local_df['AQI'], gridsize=50, cmap='viridis', reduce_C_function=np.mean)
+    
+    ax.grid(True)
+    plt.colorbar(hb, label='mean(AQI)')
     ax.set_xlabel('Longitude')
     ax.set_ylabel('Latitude')
-    
-    # Create a colorbar reflecting the range from 0 to 200
-    plt.colorbar(sc, label='AQI')
+    plt.title('Heatmap of AQI')
 
-    # Save the plot to a BytesIO buffer
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
     plt.close(fig)
+    
     return send_file(buf, mimetype='image/png')
 
 

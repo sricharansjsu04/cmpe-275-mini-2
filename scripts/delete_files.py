@@ -31,7 +31,7 @@ base_path = '/Users/charan/Desktop/SJSU/275/CMPE-275-HPC-All_working/'  # Adjust
 directories_to_clean = ['logs']
 for directory in directories_to_clean:
     directory_path = os.path.join(base_path, directory)
-    delete_all_files_in_directory(directory_path)
+    #delete_all_files_in_directory(directory_path)
 
 # Delete specific pattern-matched files from the 'data' directory
 data_directory = os.path.join(base_path, 'data')
